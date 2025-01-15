@@ -1,4 +1,4 @@
-200	unsigned int maxIteration;
+500	unsigned int maxIteration;
 1.0E-7	double 0.0 < epsilonStar;
 1.0E4   double 0.0 < lambdaStar;
 2.0   	double 1.0 < omegaStar;
@@ -8,6 +8,6 @@
 0.3     double 0.0 <= betaBar  <  1.0, betaStar <= betaBar;
 0.9     double 0.0 < gammaStar  <  1.0;
 1.0E-7	double 0.0 < epsilonDash;
-200     precision
+300     precision
 
 
