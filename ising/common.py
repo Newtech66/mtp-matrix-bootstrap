@@ -1,5 +1,3 @@
-import bisect
-
 class SiteBasis:
     def __init__(self, N):
         self._N = N
@@ -69,6 +67,11 @@ class SiteBasis:
         return smaller_basis
 
     def gen_basis(self):
+        # small_basis = []
+        # L = self._N
+        # for i in range(4 ** L):
+        #     small_basis.append(self.full_unrank(i))
+        # return small_basis
         small_basis = self.enforce_rotation()
         return self.enforce_reflection(small_basis)
     
@@ -78,13 +81,14 @@ class SiteBasis:
     def rank(self, word: str):
         if len(word) != self._N:
             raise ValueError(f'{word} must be of length {self._N}')
-        if word not in self._opset:
-            word = self.normalize(word)
-        return bisect.bisect_left(self._ops, word)
+        word = self.normalize(word)
+        return self._ops.index(word)
+        # return bisect.bisect_left(self._ops, word)
 
     def unrank(self, pos: int):
-        word = self.full_unrank(pos)
-        return self._ops[self.rank(word)]
+        # word = self.full_unrank(pos)
+        # return self._ops[self.rank(word)]
+        return self._ops[pos]
 
     def normalize(self, word):
         if len(word) != self._N:
