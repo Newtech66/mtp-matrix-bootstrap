@@ -9,6 +9,11 @@ from bitarray import bitarray
 from bitarray.util import count_and
 
 class SiteBasis:
+    """This class implements a full basis of Pauli operators over N sites.
+    
+    There are two options which apply rotational symmetry and reflection symmetry
+    to the generated basis.
+    """
     def __init__(self, L, use_rot=False, use_reflect=False):
         self._N = L
         self._opset = set()
@@ -24,21 +29,6 @@ class SiteBasis:
                 exclude.update(self.gen_rotations(op[::-1]))
         self._ops = list(self._opset)
         self._ops.sort()
-   
-    def full_rank(self, word):
-        r = 0
-        for i, op in enumerate(reversed(word)):
-            if op not in 'IXYZ':
-                raise ValueError(f'{word} must have only IXYZ')
-            r += (4 ** i) * ('IXYZ'.find(op))
-        return r
-
-    def full_unrank(self, pos):
-        word = [None] * self._N
-        for i in range(self._N):
-            word[i] = 'IXYZ'[pos % 4]
-            pos //= 4
-        return ''.join(word[::-1])
 
     def gen_rotations(self, op):
         rots = [op]
@@ -72,11 +62,12 @@ class SiteBasis:
                 return word2
         # Normalize the mirror, always works
         return self.normalize(word[::-1])
-    
-# An efficient implementation of Pauli string operations (arXiV:2405.19287)
-# z is bits[::2], x is bits[1::2]
 
 class PauliString:
+    r"""An efficient implementation of Pauli string operations (arXiV:2405.19287).
+    
+    With reference to the paper, z is bits[::2], x is bits[1::2].
+    """
     CODEC = {'I': bitarray('00'),
              'Z': bitarray('10'),
              'X': bitarray('01'),
@@ -85,6 +76,7 @@ class PauliString:
            'Z': np.diag([1, -1]),
            'X': np.fliplr(np.diag([1, 1])),
            'Y': np.fliplr(np.diag([-1j, 1j]))}
+
     def __init__(self, label: str | Self = None, bits: bitarray = None):
         self.bits = None
         self._str = None
@@ -120,49 +112,52 @@ class PauliString:
         return self.bits == other.bits
 
     def __mul__(self, other: Self):
-        """Multiply two PauliStrings."""
+        """Product of two Pauli strings (without phase factor)."""
         if not isinstance(other, PauliString):
             raise TypeError("other is not a PauliString")
         return self.multiply(other)
 
-    def __or__(self, other: Self):
-        """Commutator of two PauliStrings."""
-        if not isinstance(other, PauliString):
-            raise TypeError("other is not a PauliString")
-        return self.multiply(other) if not self.commutes_with(other) else None
-    
-    def __and__(self, other: Self):
-        """Anticommutator of two PauliStrings."""
-        if not isinstance(other, PauliString):
-            raise TypeError("other is not a PauliString")
-        return self.multiply(other) if self.commutes_with(other) else None
-    
-    def commutes_with(self, other: Self):
-        """Check if two Pauli bitarrays commute."""
-        if not isinstance(other, PauliString):
-            raise TypeError("other is not a PauliString")
-        return count_and(self.bits[::2], other.bits[1::2]) % 2 == count_and(self.bits[1::2], other.bits[::2]) % 2
-    
     def phase(self, other: Self):
-        """Find the phase of the product of two Pauli bitarrays."""
+        """Find the phase of the product of two Pauli strings."""
         if not isinstance(other, PauliString):
             raise TypeError("other is not a PauliString")
         return (-1j) ** ((2 * count_and(self.bits[1::2], other.bits[::2])
                           + count_and(self.bits[::2], self.bits[1::2])
                           + count_and(other.bits[::2], other.bits[1::2])
                           - count_and(self.bits[::2] ^ other.bits[::2], self.bits[1::2] ^ other.bits[1::2])) % 4)
+
+    def __or__(self, other: Self):
+        """Commutator of two Pauli strings."""
+        if not isinstance(other, PauliString):
+            raise TypeError("other is not a PauliString")
+        return self.multiply(other) if not self.commutes_with(other) else None
+    
+    def __and__(self, other: Self):
+        """Anticommutator of two Pauli strings."""
+        if not isinstance(other, PauliString):
+            raise TypeError("other is not a PauliString")
+        return self.multiply(other) if self.commutes_with(other) else None
+    
+    def commutes_with(self, other: Self):
+        """Check if two Pauli strings commute."""
+        if not isinstance(other, PauliString):
+            raise TypeError("other is not a PauliString")
+        return count_and(self.bits[::2], other.bits[1::2]) % 2 == count_and(self.bits[1::2], other.bits[::2]) % 2
     
     def multiply(self, other: Self):
-        """Return the Pauli bitarray corresponding to the product of two Pauli bitarrays."""
+        """Internal method to multiply two Pauli strings."""
         if not isinstance(other, PauliString):
             raise TypeError("other is not a PauliString")
         return PauliString(bits=self.bits ^ other.bits)
     
     def to_matrix(self):
         """Return the matrix corresponding to this Pauli string."""
+        # Consider using Pauli Tree Decomposition instead (arxiv:2403.11644)
+        # Would return a sparse matrix
         return ft.reduce(np.kron, (self.MAT[p] for p in self.__repr__()))
 
 class PauliSum:
+    """Implements a linear combination of Pauli strings."""
     # Consider implementing __iter__
     def __init__(self, labels_and_weights: dict[str, complex] | str | PauliString | Self):
         self.terms = None
@@ -209,12 +204,15 @@ class PauliSum:
         res += other
         return res
 
-    def __imul__(self, other: complex):
-        if not isinstance(other, complex):
-            raise TypeError("other is not a complex")
-        for pstr in self.terms:
-            self.terms[pstr] *= other
-        return self
+    def __imul__(self, other: complex | Self):
+        if isinstance(other, complex):
+            for pstr in self.terms:
+                self.terms[pstr] *= other
+            return self
+        elif isinstance(other, PauliSum):
+            # I don't see a better choice
+            return self * other
+        raise TypeError(f"Unsupported type {type(other)}")
 
     def __rmul__(self, other: complex):
         if not isinstance(other, complex):
@@ -226,6 +224,7 @@ class PauliSum:
     def __mul__(self, other: Self | complex):
         """Multiply two PauliSums."""
         if isinstance(other, PauliSum):
+            # Consider using the modified FWHT instead
             res = Counter()
             for l1, w1 in self.terms.items():
                 for l2, w2 in other.terms.items():
