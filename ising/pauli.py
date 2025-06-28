@@ -6,7 +6,8 @@ from collections import Counter
 
 import numpy as np
 from bitarray import bitarray
-from bitarray.util import count_and
+from bitarray.util import count_and, ba2int
+from scipy.sparse import csr_matrix
 
 class SiteBasis:
     """This class implements a full basis of Pauli operators over N sites.
@@ -72,9 +73,9 @@ class PauliString:
              'Z': bitarray('10'),
              'X': bitarray('01'),
              'Y': bitarray('11'),}
-    MAT = {'I': np.diag([1, 1]),
-           'Z': np.diag([1, -1]),
-           'X': np.fliplr(np.diag([1, 1])),
+    MAT = {'I': np.diag([1.0, 1.0]),
+           'Z': np.diag([1.0, -1.0]),
+           'X': np.fliplr(np.diag([1.0, 1.0])),
            'Y': np.fliplr(np.diag([-1j, 1j]))}
 
     def __init__(self, label: str | Self = None, bits: bitarray = None):
@@ -150,11 +151,37 @@ class PauliString:
             raise TypeError("other is not a PauliString")
         return PauliString(bits=self.bits ^ other.bits)
     
+    def to_sparse_matrix(self):
+        """Return the sparse array corresponding to self.
+        
+        Uses the Pauli Tree Decomposition Routine (arxiv:2403.11644).
+        """
+        s = str(self)
+        rows = np.arange(2 ** len(s), dtype=np.int32)
+        cols = np.zeros(2 ** len(s), dtype=np.int32)
+        data = np.zeros(2 ** len(s), dtype=np.float64)
+        cols[0] = ba2int(self.bits[1::2])
+        data[0] = 1
+        for d, t in enumerate(reversed(s)):
+            if t == 'I':
+                cols[2 ** d : 2 ** (d + 1)] = cols[0 : 2 ** d] + 2 ** d
+                data[2 ** d : 2 ** (d + 1)] = data[0 : 2 ** d]
+            elif t == 'X':
+                cols[2 ** d : 2 ** (d + 1)] = cols[0 : 2 ** d] - 2 ** d
+                data[2 ** d : 2 ** (d + 1)] = data[0 : 2 ** d]
+            elif t == 'Y':
+                cols[2 ** d : 2 ** (d + 1)] = cols[0 : 2 ** d] - 2 ** d
+                data[2 ** d : 2 ** (d + 1)] = -data[0 : 2 ** d]
+            elif t == 'Z':
+                cols[2 ** d : 2 ** (d + 1)] = cols[0 : 2 ** d] + 2 ** d
+                data[2 ** d : 2 ** (d + 1)] = -data[0 : 2 ** d]
+        mat = (-1j) ** (s.count('Y')) * csr_matrix((data, (rows, cols)))
+        return mat
+    
     def to_matrix(self):
-        """Return the matrix corresponding to this Pauli string."""
-        # Consider using Pauli Tree Decomposition instead (arxiv:2403.11644)
-        # Would return a sparse matrix
-        return ft.reduce(np.kron, (self.MAT[p] for p in self.__repr__()))
+        """Return the matrix corresponding to self."""
+        return self.to_sparse_matrix().toarray()
+
 
 class PauliSum:
     """Implements a linear combination of Pauli strings."""
@@ -329,7 +356,7 @@ class PauliSum:
         return b
 
     @classmethod
-    def from_matrix(cls, mat: np.ndarray):
+    def from_matrix(cls, mat: np.ndarray) -> Self:
         L = int(mat.shape[0]).bit_length() - 1
         wvec = PauliSum.matrix_decomposition(mat)
         obj = Counter()
@@ -338,9 +365,14 @@ class PauliSum:
             obj[sop] += wvec[i]
         return PauliSum(obj)
 
-    def to_matrix(self):
-        return sum(weight * pstr.to_matrix() for pstr, weight in self.terms.items())
+    def to_sparse_matrix(self):
+        """Return the sparse array corresponding to self."""
+        return sum(weight * pstr.to_sparse_matrix() for pstr, weight in self.terms.items())
+    
+    def to_matrix(self) -> np.ndarray:
+        """Return the matrix corresponding to self."""
+        return self.to_sparse_matrix().toarray()
 
-    def clean(self, dirty_counter: Counter):
+    def clean(self, dirty_counter: Counter) -> Counter:
         """Remove zero terms."""
         return Counter({label: weight for label, weight in dirty_counter.items() if not np.isclose(weight, 0)})

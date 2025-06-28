@@ -14,7 +14,7 @@ def gen_periodic(op: str, L: int, weight: float) -> Counter:
     return terms
 
 
-def transverse_ising_field_model(L: int, h: float) -> PauliSum:
+def transverse_field_ising_model(L: int, h: float) -> PauliSum:
     """Returns the Hamiltonian"""
     hamil = Counter()
     hamil.update(gen_periodic('XX', L, -1.0))
