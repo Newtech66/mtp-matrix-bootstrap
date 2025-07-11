@@ -8,6 +8,7 @@ import numpy as np
 from bitarray import bitarray
 from bitarray.util import count_and, ba2int
 from scipy.sparse import csr_matrix
+from openfermion import QubitOperator
 
 class SiteBasis:
     """This class implements a full basis of Pauli operators over N sites.
@@ -73,10 +74,6 @@ class PauliString:
              'Z': bitarray('10'),
              'X': bitarray('01'),
              'Y': bitarray('11'),}
-    MAT = {'I': np.diag([1.0, 1.0]),
-           'Z': np.diag([1.0, -1.0]),
-           'X': np.fliplr(np.diag([1.0, 1.0])),
-           'Y': np.fliplr(np.diag([-1j, 1j]))}
 
     def __init__(self, label: str | Self = None, bits: bitarray = None):
         self.bits = None
@@ -122,10 +119,10 @@ class PauliString:
         """Find the phase of the product of two Pauli strings."""
         if not isinstance(other, PauliString):
             raise TypeError("other is not a PauliString")
-        return (-1j) ** ((2 * count_and(self.bits[1::2], other.bits[::2])
-                          + count_and(self.bits[::2], self.bits[1::2])
-                          + count_and(other.bits[::2], other.bits[1::2])
-                          - count_and(self.bits[::2] ^ other.bits[::2], self.bits[1::2] ^ other.bits[1::2])) % 4)
+        z1, x1 = self.bits[::2], self.bits[1::2]
+        z2, x2 = other.bits[::2], other.bits[1::2]
+        z3, x3 = z1 ^ z2, x1 ^ x2
+        return (-1j) ** ((2 * count_and(x1, z2) + count_and(z1, x1) + count_and(z2, x2) - count_and(z3, x3)) % 4)
 
     def __or__(self, other: Self):
         """Commutator of two Pauli strings."""
@@ -143,7 +140,9 @@ class PauliString:
         """Check if two Pauli strings commute."""
         if not isinstance(other, PauliString):
             raise TypeError("other is not a PauliString")
-        return count_and(self.bits[::2], other.bits[1::2]) % 2 == count_and(self.bits[1::2], other.bits[::2]) % 2
+        z1, x1 = self.bits[::2], self.bits[1::2]
+        z2, x2 = other.bits[::2], other.bits[1::2]
+        return (count_and(z1, x2) + count_and(x1, z2)) % 2 == 0
     
     def multiply(self, other: Self):
         """Internal method to multiply two Pauli strings."""
@@ -181,6 +180,13 @@ class PauliString:
     def to_matrix(self):
         """Return the matrix corresponding to self."""
         return self.to_sparse_matrix().toarray()
+    
+    def to_qubit_operator(self, weight: complex = 1.0):
+        return QubitOperator(' '.join(f'{c}{i}' for i, c in enumerate(str(self)) if c != 'I'), weight)
+    
+    def trace(self):
+        """Return the trace of self. 2 ** n if identity, 0 otherwise."""
+        return 2.0 ** (len(self.bits) // 2) if self.bits.count() == 0 else 0.0
 
 
 class PauliSum:
@@ -231,8 +237,8 @@ class PauliSum:
         res += other
         return res
 
-    def __imul__(self, other: complex | Self):
-        if isinstance(other, complex):
+    def __imul__(self, other: float | complex | Self):
+        if isinstance(other, complex) or isinstance(other, float):
             for pstr in self.terms:
                 self.terms[pstr] *= other
             return self
@@ -241,14 +247,14 @@ class PauliSum:
             return self * other
         raise TypeError(f"Unsupported type {type(other)}")
 
-    def __rmul__(self, other: complex):
-        if not isinstance(other, complex):
+    def __rmul__(self, other: complex | float):
+        if not isinstance(other, complex) and not isinstance(other, float):
             raise TypeError("other is not a complex")
         res = PauliSum(self)
         res *= other
         return res
 
-    def __mul__(self, other: Self | complex):
+    def __mul__(self, other: Self | complex | float):
         """Multiply two PauliSums."""
         if isinstance(other, PauliSum):
             # Consider using the modified FWHT instead
@@ -257,7 +263,7 @@ class PauliSum:
                 for l2, w2 in other.terms.items():
                     res[l1 * l2] += l1.phase(l2) * w1 * w2
             return PauliSum(res)
-        elif isinstance(other, complex):
+        elif isinstance(other, complex) or isinstance(other, float):
             res = PauliSum(self)
             res *= other
             return res
@@ -371,8 +377,18 @@ class PauliSum:
     
     def to_matrix(self) -> np.ndarray:
         """Return the matrix corresponding to self."""
-        return self.to_sparse_matrix().toarray()
+        sp_mat = self.to_sparse_matrix()
+        if isinstance(sp_mat, int):
+            return sp_mat
+        return sp_mat.toarray()
 
     def clean(self, dirty_counter: Counter) -> Counter:
         """Remove zero terms."""
-        return Counter({label: weight for label, weight in dirty_counter.items() if not np.isclose(weight, 0)})
+        return Counter({label: weight for label, weight in dirty_counter.items() if np.abs(weight) > 1e-9})
+
+    def to_qubit_operator(self):
+        return sum(label.to_qubit_operator(weight) for label, weight in self.terms.items())
+
+    def trace(self):
+        """Return the trace of self. 2 ** n if identity, 0 otherwise."""
+        return sum(weight * label.trace() for label, weight in self.terms.items())
